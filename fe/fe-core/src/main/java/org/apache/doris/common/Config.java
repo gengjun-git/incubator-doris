@@ -988,9 +988,14 @@ public class Config extends ConfigBase {
     @ConfField public static boolean use_new_tablet_scheduler = true;
 
     /**
+     * FOR BeLoadBalancer:
      * the threshold of cluster balance score, if a backend's load score is 10% lower than average score,
      * this backend will be marked as LOW load, if load score is 10% higher than average score, HIGH load
      * will be marked.
+     *
+     * FOR DiskAndTabletLoadBalancer:
+     * upper limit of the difference in disk usage of all backends, exceeding this threshold will cause
+     * disk balance
      */
     @ConfField(mutable = true, masterOnly = true)
     public static double balance_load_score_threshold = 0.1; // 10%
@@ -1022,6 +1027,13 @@ public class Config extends ConfigBase {
     // Valid only if use PartitionRebalancer
     @ConfField(mutable = true, masterOnly = true)
     public static int partition_rebalance_max_moves_num_per_selection = 10;
+
+    /**
+    * For DiskAndTabletLoadBalancer:
+    * if all backends disk usage is lower than this threshold, disk balance will never happen
+    */
+    @ConfField(mutable = true, masterOnly = true)
+    public static double balance_load_disk_safe_threshold = 0.5; // 50%
 
     // This threshold is to avoid piling up too many report task in FE, which may cause OOM exception.
     // In some large Doris cluster, eg: 100 Backends with ten million replicas, a tablet report may cost

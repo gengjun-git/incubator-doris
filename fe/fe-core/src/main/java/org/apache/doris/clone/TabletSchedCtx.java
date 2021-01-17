@@ -29,6 +29,7 @@ import org.apache.doris.catalog.Tablet;
 import org.apache.doris.catalog.Tablet.TabletStatus;
 import org.apache.doris.clone.SchedException.Status;
 import org.apache.doris.clone.TabletScheduler.PathSlot;
+import org.apache.doris.clone.TabletScheduler.TabletBalancerStrategy;
 import org.apache.doris.common.Config;
 import org.apache.doris.common.FeConstants;
 import org.apache.doris.common.Pair;
@@ -38,6 +39,7 @@ import org.apache.doris.system.Backend;
 import org.apache.doris.system.SystemInfoService;
 import org.apache.doris.task.AgentTaskQueue;
 import org.apache.doris.task.CloneTask;
+import org.apache.doris.clone.DiskAndTabletLoadReBalancer.BalanceType;
 import org.apache.doris.thrift.TBackend;
 import org.apache.doris.thrift.TFinishTaskRequest;
 import org.apache.doris.thrift.TStatusCode;
@@ -202,7 +204,13 @@ public class TabletSchedCtx implements Comparable<TabletSchedCtx> {
     private int tabletOrderIdx = -1;
 
     private SystemInfoService infoService;
-    
+
+    // for DiskAndTabletLoadReBalancer to identify balance type
+    private BalanceType balanceType;
+    // for DiskAndTabletLoadBalancer to identify whether to release disk path resource
+    private boolean srcPathResourceHold = false;
+    private boolean destPathResourceHold = false;
+
     public TabletSchedCtx(Type type, String cluster, long dbId, long tblId, long partId,
             long idxId, long tabletId, long createTime) {
         this.type = type;
@@ -397,6 +405,10 @@ public class TabletSchedCtx implements Comparable<TabletSchedCtx> {
         this.srcPathHash = srcReplica.getPathHash();
     }
 
+    public Replica getSrcReplica() {
+        return this.srcReplica;
+    }
+
     public long getDestBackendId() {
         return destBackendId;
     }
@@ -454,6 +466,30 @@ public class TabletSchedCtx implements Comparable<TabletSchedCtx> {
 
     public int getTabletOrderIdx() {
         return tabletOrderIdx;
+    }
+
+    public BalanceType getBalanceType() {
+        return balanceType;
+    }
+
+    public void setBalanceType(BalanceType balanceType) {
+        this.balanceType = balanceType;
+    }
+
+    public void setSrcPathResourceHold() {
+        this.srcPathResourceHold = true;
+    }
+
+    public boolean isSrcPathResourceHold() {
+        return this.srcPathResourceHold;
+    }
+
+    public void setDestPathResourceHold() {
+        this.destPathResourceHold = true;
+    }
+
+    public boolean isDestPathResourceHold() {
+        return this.destPathResourceHold;
     }
 
     // database lock should be held.
@@ -599,7 +635,10 @@ public class TabletSchedCtx implements Comparable<TabletSchedCtx> {
                 if (type == Type.REPAIR) {
                     slot.freeSlot(srcPathHash);
                 } else {
-                    slot.freeBalanceSlot(srcPathHash);
+                    if (!TabletBalancerStrategy.isTabletAndDiskStrategy(Config.tablet_balancer_strategy)
+                            || isSrcPathResourceHold()) {
+                        slot.freeBalanceSlot(srcPathHash);
+                    }
                 }
             }
         }
@@ -610,7 +649,10 @@ public class TabletSchedCtx implements Comparable<TabletSchedCtx> {
                 if (type == Type.REPAIR) {
                     slot.freeSlot(destPathHash);
                 } else {
-                    slot.freeBalanceSlot(destPathHash);
+                    if (!TabletBalancerStrategy.isTabletAndDiskStrategy(Config.tablet_balancer_strategy)
+                            || isDestPathResourceHold()) {
+                        slot.freeBalanceSlot(destPathHash);
+                    }
                 }
             }
         }
@@ -649,8 +691,14 @@ public class TabletSchedCtx implements Comparable<TabletSchedCtx> {
         /*
          * If state is PENDING, these fields will be reset when being rescheduled.
          * if state is FINISHED/CANCELLED/TIMEOUT, leave these fields for show.
+         *
+         * condition explain:
+         * 1. only for PENDING task
+         * 2. repair task or balance task that dose not adopt strategy of TABLET_BALANCER_STRATEGY_DISK_AND_TABLET
          */
-        if (state == State.PENDING) {
+        if (state == State.PENDING
+                && (type == Type.REPAIR
+                    || (type == Type.BALANCE && !TabletBalancerStrategy.isTabletAndDiskStrategy(Config.tablet_balancer_strategy)))) {
             if (!reserveTablet) {
                 this.tablet = null;
             }
@@ -677,7 +725,7 @@ public class TabletSchedCtx implements Comparable<TabletSchedCtx> {
         Backend destBe = infoService.getBackend(destBackendId);
         if (destBe == null) {
             throw new SchedException(Status.SCHEDULE_FAILED,
-                "dest backend " + srcReplica.getBackendId() + " does not exist");
+                "dest backend " + destBackendId + " does not exist");
         }
         
         taskTimeoutMs = getApproximateTimeoutMs();

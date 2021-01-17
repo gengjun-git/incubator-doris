@@ -521,6 +521,23 @@ public class TabletInvertedIndex {
         }
     }
 
+    /**
+     *
+     * @return array of pair(partitionId, indexId)
+     */
+    public List<Pair<Long, Long>> getAllPartitionIndex() {
+        List<Pair<Long, Long>> partitionIndexList = new ArrayList<>(tabletMetaTable.size());
+        readLock();
+        try {
+            tabletMetaTable.values().forEach(tabletMeta ->
+                partitionIndexList.add(new Pair<>(tabletMeta.getPartitionId(), tabletMeta.getIndexId()))
+            );
+        } finally {
+            readUnlock();
+        }
+        return partitionIndexList;
+    }
+
     public List<Long> getTabletIdsByBackendId(long backendId) {
         List<Long> tabletIds = Lists.newArrayList();
         readLock();

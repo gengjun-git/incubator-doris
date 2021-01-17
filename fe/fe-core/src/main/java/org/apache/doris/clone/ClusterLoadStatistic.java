@@ -280,6 +280,10 @@ public class ClusterLoadStatistic {
         return null;
     }
 
+    public List<BackendLoadStatistic> getAllBackendLoadStatistic() {
+        return beLoadStatistics;
+    }
+
     /*
      * If cluster is balance, all Backends will be in 'mid', and 'high' and 'low' is empty
      * If both 'high' and 'low' has Backends, just return

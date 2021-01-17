@@ -17,6 +17,7 @@
 
 package org.apache.doris.clone;
 
+import com.google.common.collect.Sets;
 import org.apache.doris.catalog.DiskInfo;
 import org.apache.doris.catalog.DiskInfo.DiskState;
 import org.apache.doris.catalog.TabletInvertedIndex;
@@ -65,6 +66,21 @@ public class BackendLoadStatistic {
             Double score1 = o1.getMixLoadScore();
             Double score2 = o2.getMixLoadScore();
             return score1.compareTo(score2);
+        }
+    }
+
+    public static class BeStatComparatorForUsedPercent implements Comparator<BackendLoadStatistic> {
+        private TStorageMedium medium;
+
+        public BeStatComparatorForUsedPercent (TStorageMedium medium) {
+            this.medium = medium;
+        }
+
+        @Override
+        public int compare(BackendLoadStatistic o1, BackendLoadStatistic o2) {
+            double percent1 = o1.getUsedPercent(medium);
+            double percent2 = o2.getUsedPercent(medium);
+            return Double.compare(percent1, percent2);
         }
     }
 
@@ -130,6 +146,14 @@ public class BackendLoadStatistic {
         return totalUsedCapacityMap.getOrDefault(medium, 0L);
     }
 
+    public double getUsedPercent(TStorageMedium medium) {
+        double totalCapacity = getTotalCapacityB(medium);
+        if (totalCapacity > 0) {
+            return ((double) getTotalUsedCapacityB(medium)) / totalCapacity;
+        }
+        return 0.0;
+    }
+
     public long getReplicaNum(TStorageMedium medium) {
         return totalReplicaNumMap.getOrDefault(medium, 0L);
     }
@@ -150,7 +174,7 @@ public class BackendLoadStatistic {
                 totalLoadScore += getLoadScore(medium);
             }
         }
-        return totalLoadScore / mediumCount == 0 ? 1 : mediumCount;
+        return totalLoadScore / (mediumCount == 0 ? 1 : mediumCount);
     }
 
     public void setClazz(TStorageMedium medium, Classification clazz) {
@@ -340,6 +364,21 @@ public class BackendLoadStatistic {
 
         LOG.debug("after adjust, backend {} path classification low/mid/high: {}/{}/{}",
                 beId, low.size(), mid.size(), high.size());
+    }
+
+    public Set<Long> getPathStatisticForMIDAndClazz(Classification clazz, TStorageMedium storageMedium) {
+        Set<Long> paths = Sets.newHashSet();
+        for (RootPathLoadStatistic pathStat : pathStatistics) {
+            if (pathStat.getDiskState() == DiskState.OFFLINE
+                    || (storageMedium != null && pathStat.getStorageMedium() != storageMedium)) {
+                continue;
+            }
+
+            if (pathStat.getClazz() == clazz || pathStat.getClazz() == Classification.MID) {
+                paths.add(pathStat.getPathHash());
+            }
+        }
+        return paths;
     }
 
     public List<RootPathLoadStatistic> getPathStatistics() {
